@@ -1,5 +1,5 @@
 /*
-	Copyright (c) 2012 Christopher A. Taylor.  All rights reserved.
+	Copyright (c) 2014 Christopher A. Taylor.  All rights reserved.
 
 	Redistribution and use in source and binary forms, with or without
 	modification, are permitted provided that the following conditions are met:
@@ -26,19 +26,43 @@
 	POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef CAT_MEMSWAP_HPP
-#define CAT_MEMSWAP_HPP
+#include "MemSwap.h"
 
-#include "Platform.hpp"
+static void cat_memswap(void * CAT_RESTRICT vx, void * CAT_RESTRICT vy, int bytes)
+{
+	// Primary engine
+	u64 * CAT_RESTRICT x64 = (u64 *)( vx );
+	u64 * CAT_RESTRICT y64 = (u64 *)( vy );
+	u64 temp;
 
-namespace cat {
+	// Handle remaining multiples of 8 bytes
+	while (bytes >= 8) {
+		temp = x64[0];
+		x64[0] = y64[0];
+		y64[0] = temp;
+		bytes -= 8;
+		++x64;
+		++y64;
+	}
 
+	// Handle final <8 bytes
+	u8 * CAT_RESTRICT x = (u8 *) x64;
+	u8 * CAT_RESTRICT y = (u8 *) y64;
+	u8 t;
+	u32 t32;
 
-// In-place swap of two buffers
-void memswap(void * CAT_RESTRICT vx, void * CAT_RESTRICT vy, int bytes);
-
-
-} // namespace cat
-
-#endif // CAT_MEMSWAP_HPP
+	switch (bytes) {
+	case 7: t = x[6]; x[6] = y[6]; y[6] = t;
+	case 6:	t = x[5]; x[5] = y[5]; y[5] = t;
+	case 5:	t = x[4]; x[4] = y[4]; y[4] = t;
+	case 4:	t32 = *(u32*)x; *(u32*)x = *(u32*)y; *(u32*)y = t32;
+		break;
+	case 3:	t = x[2]; x[2] = y[2]; y[2] = t;
+	case 2:	t = x[1]; x[1] = y[1]; y[1] = t;
+	case 1:	t = x[0]; x[0] = y[0]; y[0] = t;
+	case 0:
+	default:
+		break;
+	}
+}
 

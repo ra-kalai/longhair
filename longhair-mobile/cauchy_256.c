@@ -26,6 +26,7 @@
 	POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include <stdlib.h>
 #include "cauchy_256.h"
 
 /*
@@ -216,9 +217,8 @@ using namespace std;
 #endif
 
 //#include "BitMath.hpp"
-#include "MemXOR.hpp"
-#include "MemSwap.hpp"
-using namespace cat;
+#include "MemXOR.h"
+#include "MemSwap.h"
 
 // Constants for precomputed table for window method
 static const int PRECOMP_TABLE_SIZE = 11; // Number of non-zero elements
@@ -352,18 +352,21 @@ static void GFC256Init()
 	}
 
 	// Allocate table memory 65KB x 2
-	GFC256_MUL_TABLE = new u8[256 * 256 * 2];
+	GFC256_MUL_TABLE = (u8*)malloc(256 * 256 * 2);
 	GFC256_DIV_TABLE = GFC256_MUL_TABLE + 256 * 256;
 
 	u8 *m = GFC256_MUL_TABLE, *d = GFC256_DIV_TABLE;
+	int x;
+	int y;
+	int log_x;
 
 	// Unroll y = 0 subtable
-	for (int x = 0; x < 256; ++x) {
+	for (x = 0; x < 256; ++x) {
 		m[x] = d[x] = 0;
 	}
 
 	// For each other y value,
-	for (int y = 1; y < 256; ++y) {
+	for (y = 1; y < 256; ++y) {
 		// Calculate log(y) for mult and 255 - log(y) for div
 		const u8 log_y = GFC256_LOG_TABLE[y];
 		const u8 log_yn = 255 - log_y;
@@ -377,8 +380,8 @@ static void GFC256Init()
 		d[0] = 0;
 
 		// Calculate x * y, x / y
-		for (int x = 1; x < 256; ++x) {
-			int log_x = GFC256_LOG_TABLE[x];
+		for (x = 1; x < 256; ++x) {
+			log_x = GFC256_LOG_TABLE[x];
 
 			m[x] = GFC256_EXP_TABLE[log_x + log_y];
 			d[x] = GFC256_EXP_TABLE[log_x + log_yn];
@@ -386,7 +389,7 @@ static void GFC256Init()
 	}
 }
 
-extern "C" int _cauchy_256_init(int expected_version)
+int _cauchy_256_init(int expected_version)
 {
 	if (expected_version != CAUCHY_256_VERSION) {
 		return -1;
@@ -419,34 +422,34 @@ static CAT_INLINE u8 GFC256Divide(u8 x, u8 y)
 #define CAT_CAUCHY_MATRIX_STACK_SIZE 1024
 
 // Precondition: m > 1
-static const u8 *cauchy_matrix(int k, int m, int &stride,
-		u8 stack[CAT_CAUCHY_MATRIX_STACK_SIZE], bool &dynamic_memory)
+static u8 *cauchy_matrix(int k, int m, int *stride,
+		u8 stack[CAT_CAUCHY_MATRIX_STACK_SIZE], int *dynamic_memory)
 {
-	dynamic_memory = false;
+	*dynamic_memory = 0;
 
 	switch (m) {
 	case 2:
-		stride = 254;
+		*stride = 254;
 		return CAUCHY_MATRIX_2;
 	case 3:
-		stride = 253;
+		*stride = 253;
 		return CAUCHY_MATRIX_3;
 	case 4:
-		stride = 252;
+		*stride = 252;
 		return CAUCHY_MATRIX_4;
 	case 5:
-		stride = 251;
+		*stride = 251;
 		return CAUCHY_MATRIX_5;
 	case 6:
-		stride = 250;
+		*stride = 250;
 		return CAUCHY_MATRIX_6;
 	}
 
 	u8 *matrix = stack;
 	int matrix_size = k * (m - 1);
 	if (matrix_size > CAT_CAUCHY_MATRIX_STACK_SIZE) {
-		matrix = new u8[matrix_size];
-		dynamic_memory = true;
+		matrix =  (u8*) malloc(matrix_size);
+		*dynamic_memory = 1;
 	}
 
 	// Get X[] and Y[] vectors
@@ -462,19 +465,20 @@ static const u8 *cauchy_matrix(int k, int m, int &stride,
 	// F = 0, A = 1
 
 	u8 *row = matrix;
-	for (int y = 1; y < m; ++y) {
+	int x, y;
+	for (y = 1; y < m; ++y) {
 		u8 G = Y[y - 1];
 
 		// Unroll x = 0
 		*row++ = GFC256_INV_TABLE[1 ^ G];
-		for (int x = 1; x < k; ++x) {
+		for (x = 1; x < k; ++x) {
 			u8 B = X[x - 1];
 
 			// b = (B + F) / (B + G), F = 0
 			*row++ = GFC256Divide(B, B ^ G);
 		}
 	}
-	stride = k;
+	*stride = k;
 
 	return matrix;
 }
@@ -487,7 +491,8 @@ static void cauchy_decode_m1(int k, Block *blocks, int block_bytes)
 {
 	// Find erased row
 	Block *erased = blocks;
-	for (int ii = 0; ii < k; ++ii, ++erased) {
+	int ii;
+	for (ii = 0; ii < k; ++ii, ++erased) {
 		if (erased->row >= k) {
 			DLOG(cout << "Found erased row " << ii << " on block row " << (int)erased->row << endl;)
 			break;
@@ -499,13 +504,13 @@ static void cauchy_decode_m1(int k, Block *blocks, int block_bytes)
 	const u8 *in = 0;
 
 	// For each block,
-	for (int ii = 0; ii < k; ++ii) {
+	for (ii = 0; ii < k; ++ii) {
 		Block *block = blocks + ii;
 		if (block != erased) {
 			if (!in) {
 				in = block->data;
 			} else {
-				memxor_add(out, in, block->data, block_bytes);
+				cat_memxor_add(out, in, block->data, block_bytes);
 				in = 0;
 			}
 		}
@@ -513,41 +518,43 @@ static void cauchy_decode_m1(int k, Block *blocks, int block_bytes)
 
 	// Complete XORs
 	if (in) {
-		memxor(out, in, block_bytes);
+		cat_memxor(out, in, block_bytes);
 	}
 }
 
 // Sort blocks into original and recovery blocks
 static void sort_blocks(int k, Block *blocks,
-		Block *original[256], int &original_count,
-		Block *recovery[256], int &recovery_count, u8 erasures[256])
+		Block *original[256], int *original_count,
+		Block *recovery[256], int *recovery_count, u8 erasures[256])
 {
 	Block *block = blocks;
-	original_count = 0;
-	recovery_count = 0;
+	*original_count = 0;
+	*recovery_count = 0;
 
 	// Initialize erasures to zeroes
-	for (int ii = 0; ii < k; ++ii) {
+	int ii;
+	int erasure_count;
+	for (ii = 0; ii < k; ++ii) {
 		erasures[ii] = 0;
 	}
 
 	// For each input block,
-	for (int ii = 0; ii < k; ++ii, ++block) {
+	for (ii = 0; ii < k; ++ii, ++block) {
 		int row = block->row;
 
 		// If it is an original block,
 		if (row < k) {
-			original[original_count++] = block;
+			original[(*original_count)++] = block;
 			erasures[row] = 1;
 		} else {
-			recovery[recovery_count++] = block;
+			recovery[(*recovery_count)++] = block;
 		}
 	}
 
 	// Identify erasures
-	for (int ii = 0, erasure_count = 0; ii < 256 && erasure_count < recovery_count; ++ii) {
+	for (ii = 0, erasure_count = 0; ii < 256 && (erasure_count < *recovery_count); ++ii) {
 		if (!erasures[ii]) {
-			erasures[erasure_count++] = ii;
+			erasures[(erasure_count)++] = ii;
 		}
 	}
 }
@@ -558,39 +565,44 @@ static void win_original(Block *original[256], int original_count,
 						 const u8 *matrix, int stride, int subbytes,
 						 u8 **tables[2])
 {
+	int ii, jj;
+	int original_row;
+	u8 **table;
+	Block *original_block;
+	int bit_y, low, high;
 	// For each column to generate,
-	for (int jj = 0; jj < original_count; ++jj) {
-		Block *original_block = original[jj];
-		int original_row = original_block->row;
+	for (jj = 0; jj < original_count; ++jj) {
+		original_block = original[jj];
+		original_row = original_block->row;
 
 		const u8 *column = matrix + original_row;
 		const u8 *data = original_block->data;
 
 		// Fill in tables
-		for (int ii = 0; ii < 2; ++ii, data += subbytes * 4) {
-			u8 **table = tables[ii];
+		for (ii = 0; ii < 2; ++ii, data += subbytes * 4) {
+			table = tables[ii];
 			table[1] = (u8 *)data;
 			table[2] = (u8 *)data + subbytes;
 			table[4] = (u8 *)data + subbytes * 2;
 			table[8] = (u8 *)data + subbytes * 3;
 
-			memxor_set(table[3], table[1], table[2], subbytes);
-			memxor_set(table[6], table[2], table[4], subbytes);
-			memxor_set(table[5], table[1], table[4], subbytes);
-			memxor_set(table[7], table[1], table[6], subbytes);
-			memxor_set(table[9], table[1], table[8], subbytes);
-			memxor_set(table[12], table[4], table[8], subbytes);
-			memxor_set(table[10], table[2], table[8], subbytes);
-			memxor_set(table[11], table[3], table[8], subbytes);
-			memxor_set(table[13], table[1], table[12], subbytes);
-			memxor_set(table[14], table[2], table[12], subbytes);
-			memxor_set(table[15], table[3], table[12], subbytes);
+			cat_memxor_set(table[3], table[1], table[2], subbytes);
+			cat_memxor_set(table[6], table[2], table[4], subbytes);
+			cat_memxor_set(table[5], table[1], table[4], subbytes);
+			cat_memxor_set(table[7], table[1], table[6], subbytes);
+			cat_memxor_set(table[9], table[1], table[8], subbytes);
+			cat_memxor_set(table[12], table[4], table[8], subbytes);
+			cat_memxor_set(table[10], table[2], table[8], subbytes);
+			cat_memxor_set(table[11], table[3], table[8], subbytes);
+			cat_memxor_set(table[13], table[1], table[12], subbytes);
+			cat_memxor_set(table[14], table[2], table[12], subbytes);
+			cat_memxor_set(table[15], table[3], table[12], subbytes);
 		}
 
 		const int row_offset = original_count + recovery_count + 1;
 
 		// For each of the rows,
-		for (int ii = 0; ii < recovery_count; ++ii) {
+		for (ii = 0; ii < recovery_count; ++ii) {
 			Block *recovery_block = recovery[ii];
 			int matrix_row = recovery_block->row - row_offset;
 
@@ -600,22 +612,22 @@ static void win_original(Block *original[256], int original_count,
 			// If this matrix element is an 8x8 identity matrix,
 			if (matrix_row < 0 || row[0] == 1) {
 				// XOR whole block at once
-				memxor(dest, original_block->data, subbytes * 8);
+				cat_memxor(dest, original_block->data, subbytes * 8);
 			} else {
 				u8 slice = row[0];
 
 				// Generate 8x8 submatrix and XOR in bits as needed
-				for (int bit_y = 0;; ++bit_y) {
-					int low = slice & 15;
-					int high = slice >> 4;
+				for (bit_y = 0;; ++bit_y) {
+					low = slice & 15;
+					high = slice >> 4;
 
 					// Add
 					if (low && high) {
-						memxor_add(dest, tables[0][low], tables[1][high], subbytes);
+						cat_memxor_add(dest, tables[0][low], tables[1][high], subbytes);
 					} else if (low) {
-						memxor(dest, tables[0][low], subbytes);
+						cat_memxor(dest, tables[0][low], subbytes);
 					} else {
-						memxor(dest, tables[1][high], subbytes);
+						cat_memxor(dest, tables[1][high], subbytes);
 					}
 					dest += subbytes;
 
@@ -639,7 +651,9 @@ static void eliminate_original(Block *original[256], int original_count,
 	int row_offset = original_count + recovery_count + 1;
 
 	// For each recovery block,
-	for (int ii = 0; ii < recovery_count; ++ii) {
+	int ii, jj, bit_y, bit_x;
+
+	for (ii = 0; ii < recovery_count; ++ii) {
 		Block *recovery_block = recovery[ii];
 		int matrix_row = recovery_block->row - row_offset;
 		const u8 *row = matrix + stride * matrix_row;
@@ -647,7 +661,7 @@ static void eliminate_original(Block *original[256], int original_count,
 		DLOG(cout << "+ From recovery block " << ii << " at row " << matrix_row << ":" << endl;)
 
 		// For each original block,
-		for (int jj = 0; jj < original_count; ++jj) {
+		for (jj = 0; jj < original_count; ++jj) {
 			Block *original_block = original[jj];
 			int original_row = original_block->row;
 			u8 *dest = recovery_block->data;
@@ -657,19 +671,19 @@ static void eliminate_original(Block *original[256], int original_count,
 			// If this matrix element is an 8x8 identity matrix,
 			if (matrix_row < 0 || row[original_row] == 1) {
 				// XOR whole block at once
-				memxor(dest, original_block->data, subbytes * 8);
+				cat_memxor(dest, original_block->data, subbytes * 8);
 				DLOG(cout << "XOR" << endl;)
 			} else {
 				// Grab the matrix entry for this row,
 				u8 slice = row[original_row];
 
 				// XOR in bits set in 8x8 submatrix
-				for (int bit_y = 0;; ++bit_y) {
+				for (bit_y = 0;; ++bit_y) {
 					const u8 *src = original_block->data;
 
-					for (int bit_x = 0; bit_x < 8; ++bit_x, src += subbytes) {
+					for (bit_x = 0; bit_x < 8; ++bit_x, src += subbytes) {
 						if (slice & (1 << bit_x)) {
-							memxor(dest, src, subbytes);
+							cat_memxor(dest, src, subbytes);
 						}
 					}
 
@@ -689,16 +703,18 @@ static void eliminate_original(Block *original[256], int original_count,
 
 static u64 *generate_bitmatrix(int k, Block *recovery[256], int recovery_count,
 						const u8 *matrix, int stride, const u8 erasures[256],
-						int &bitstride)
+						int *bitstride)
 {
 	// Allocate the bitmatrix
 	int bitrows = recovery_count * 8;
-	bitstride = (bitrows + 63) / 64;
-	u64 *bitmatrix = new u64[bitstride * bitrows];
+	*bitstride = (bitrows + 63) / 64;
+	u64 *bitmatrix =  (u64*)malloc(*bitstride * bitrows * sizeof(*bitmatrix));
 	u64 *bitrow = bitmatrix;
 
+	int ii, jj;
+	int x;
 	// For each recovery block,
-	for (int ii = 0; ii < recovery_count; ++ii) {
+	for (ii = 0; ii < recovery_count; ++ii) {
 		Block *recovery_block = recovery[ii];
 
 		// If first row of matrix,
@@ -707,8 +723,8 @@ static u64 *generate_bitmatrix(int k, Block *recovery[256], int recovery_count,
 			// Write 8x8 identity submatrix pattern across each bit row
 			u64 pattern = 0x0101010101010101ULL;
 
-			for (int ii = 0; ii < 8; ++ii, pattern <<= 1, bitrow += bitstride) {
-				for (int x = 0; x < bitstride; ++x) {
+			for (jj = 0; jj < 8; ++jj, pattern <<= 1, bitrow += *bitstride) {
+				for (x = 0; x < *bitstride; ++x) {
 					bitrow[x] = pattern;
 				}
 			}
@@ -716,6 +732,7 @@ static u64 *generate_bitmatrix(int k, Block *recovery[256], int recovery_count,
 			const u8 *row = matrix + (recovery_row - 1) * stride;
 			int remaining = recovery_count;
 			const u8 *erasure = erasures;
+	    int shift;
 
 			// Otherwise read the elements of the matrix:
 
@@ -737,32 +754,32 @@ static u64 *generate_bitmatrix(int k, Block *recovery[256], int recovery_count,
 
 				DLOG(cout << "+ Generating 8x8 submatrix from slice=" << (int)slice << endl;)
 
-				for (int ii = 1; ii < 8; ++ii) {
+				for (jj = 1; jj < 8; ++jj) {
 					slice = GFC256Multiply(slice, 2);
-					w[ii] = (u64)slice;
+					w[jj] = (u64)slice;
 				}
 
 				// For each remaining 8 bit slice,
-				for (int shift = 8; --limit > 0; shift += 8) {
+				for (shift = 8; --limit > 0; shift += 8) {
 					slice = row[*erasure++];
 					DLOG(cout << "+ Generating 8x8 submatrix from slice=" << (int)slice << endl;)
 					w[0] |= (u64)slice << shift;
 
-					for (int ii = 1; ii < 8; ++ii) {
+					for (jj = 1; jj < 8; ++jj) {
 						slice = GFC256Multiply(slice, 2);
-						w[ii] |= (u64)slice << shift;
+						w[jj] |= (u64)slice << shift;
 					}
 				}
 
 				// Write 64-bit column of bitmatrix
 				u64 *out = bitrow;
-				for (int ii = 0; ii < 8; ++ii, out += bitstride) {
-					out[0] = w[ii];
+				for ( jj = 0; jj < 8; ++jj, out += *bitstride) {
+					out[0] = w[jj];
 				}
 				++bitrow;
 			}
 
-			bitrow += bitstride * 7;
+			bitrow += *bitstride * 7;
 		}
 
 		// Set the row to what the final recovered row will be
@@ -791,19 +808,22 @@ static void win_gaussian_elimination(int rows, Block *recovery[256],
 	const int bit_rows = rows * 8;
 	u64 mask = 1;
 	u64 *base = bitmatrix;
+	int pivot;
+	int option;
+	int ii;
 
 	// First find all the pivots.  This is similar to the unwindowed version,
 	// except that the bitmatrix low bits are not cleared, and the data is not
 	// XOR'd together:
 
 	// For each pivot to find,
-	for (int pivot = 0; pivot < bit_rows - 1; ++pivot, mask = CAT_ROL64(mask, 1), base += bitstride) {
+	for (pivot = 0; pivot < bit_rows - 1; ++pivot, mask = CAT_ROL64(mask, 1), base += bitstride) {
 		const int pivot_word = pivot >> 6;
 		u64 *offset = base + pivot_word;
 		u64 *row = offset;
 
 		// For each option,
-		for (int option = pivot; option < bit_rows; ++option, row += bitstride) {
+		for (option = pivot; option < bit_rows; ++option, row += bitstride) {
 			// If bit in this row is set,
 			if (row[0] & mask) {
 				u8 *src = recovery[pivot >> 3]->data + (pivot & 7) * subbytes;
@@ -815,10 +835,10 @@ static void win_gaussian_elimination(int rows, Block *recovery[256],
 				if (option != pivot) {
 					// Reorder data into the right place
 					u8 *data = recovery[option >> 3]->data + (option & 7) * subbytes;
-					memswap(src, data, subbytes);
+					cat_memswap(src, data, subbytes);
 
 					// Reorder matrix rows
-					memswap(row - pivot_word, base, bitstride << 3);
+					cat_memswap(row - pivot_word, base, bitstride << 3);
 				}
 
 				u64 *other = row;
@@ -834,7 +854,7 @@ static void win_gaussian_elimination(int rows, Block *recovery[256],
 						other[0] ^= offset[0] & (~(mask - 1) ^ mask);
 
 						// For each remaining word,
-						for (int ii = 1; ii < bitstride - pivot_word; ++ii) {
+						for (ii = 1; ii < bitstride - pivot_word; ++ii) {
 							other[ii] ^= offset[ii];
 						}
 					}
@@ -851,9 +871,13 @@ static void win_gaussian_elimination(int rows, Block *recovery[256],
 	// Name tables
 	u8 **lo_table = tables[0];
 	u8 **hi_table = tables[1];
+	int x;
+	int y;
+	int jj;
+	int table_index;
 
 	// For each column to generate,
-	for (int x = 0; x < rows - 3; ++x) {
+	for (x = 0; x < rows - 3; ++x) {
 		Block *block_x = recovery[x];
 		const u8 *data = block_x->data;
 		const u64 *bit_row = bitmatrix + bitstride * (x * 8 + 1) + (x / 8);
@@ -863,7 +887,7 @@ static void win_gaussian_elimination(int rows, Block *recovery[256],
 		DLOG(cout << "win_gaussian_elimination: " << x << endl;)
 
 		// For each of the two 4-bit windows,
-		for (int table_index = 0; table_index < 2; ++table_index) {
+		for (table_index = 0; table_index < 2; ++table_index) {
 			// Fill in lookup table
 			u8 **table = tables[table_index];
 			table[1] = (u8 *)data;
@@ -874,7 +898,7 @@ static void win_gaussian_elimination(int rows, Block *recovery[256],
 			// On second loop,
 			if (table_index == 1) {
 				// Clear the upper right square
-				for (int ii = 1; ii <= 8; ii <<= 1) {
+				for (ii = 1; ii <= 8; ii <<= 1) {
 					int w = (u8)(bit_row[0] >> bit_shift) & 15;
 					bit_row += bitstride;
 
@@ -882,7 +906,7 @@ static void win_gaussian_elimination(int rows, Block *recovery[256],
 					DLOG(print_word(w, 4);)
 
 					if (w) {
-						memxor(hi_table[ii], lo_table[w], subbytes);
+						cat_memxor(hi_table[ii], lo_table[w], subbytes);
 					}
 				}
 
@@ -900,7 +924,7 @@ static void win_gaussian_elimination(int rows, Block *recovery[256],
 			u64 word = bit_row[0] >> bit_shift;
 			bit_row += bitstride;
 			if (word & 1) {
-				memxor(table[2], table[1], subbytes);
+				cat_memxor(table[2], table[1], subbytes);
 			}
 
 			DLOG(print_word(bit_row[0] >> bit_shift, 4);)
@@ -908,10 +932,10 @@ static void win_gaussian_elimination(int rows, Block *recovery[256],
 			word = bit_row[0] >> bit_shift;
 			bit_row += bitstride;
 			if (word & 1) {
-				memxor(table[4], table[1], subbytes);
+				cat_memxor(table[4], table[1], subbytes);
 			}
 			if (word & 2) {
-				memxor(table[4], table[2], subbytes);
+				cat_memxor(table[4], table[2], subbytes);
 			}
 
 			DLOG(print_word(bit_row[0] >> bit_shift, 4);)
@@ -919,40 +943,40 @@ static void win_gaussian_elimination(int rows, Block *recovery[256],
 			word = bit_row[0] >> bit_shift;
 			bit_row += bitstride;
 			if (word & 1) {
-				memxor(table[8], table[1], subbytes);
+				cat_memxor(table[8], table[1], subbytes);
 			}
 			if (word & 2) {
-				memxor(table[8], table[2], subbytes);
+				cat_memxor(table[8], table[2], subbytes);
 			}
 			if (word & 4) {
-				memxor(table[8], table[4], subbytes);
+				cat_memxor(table[8], table[4], subbytes);
 			}
 
 			// Generate table
-			memxor_set(table[3], table[1], table[2], subbytes);
-			memxor_set(table[6], table[2], table[4], subbytes);
-			memxor_set(table[5], table[1], table[4], subbytes);
-			memxor_set(table[7], table[1], table[6], subbytes);
-			memxor_set(table[9], table[1], table[8], subbytes);
-			memxor_set(table[12], table[4], table[8], subbytes);
-			memxor_set(table[10], table[2], table[8], subbytes);
-			memxor_set(table[11], table[3], table[8], subbytes);
-			memxor_set(table[13], table[1], table[12], subbytes);
-			memxor_set(table[14], table[2], table[12], subbytes);
-			memxor_set(table[15], table[3], table[12], subbytes);
+			cat_memxor_set(table[3], table[1], table[2], subbytes);
+			cat_memxor_set(table[6], table[2], table[4], subbytes);
+			cat_memxor_set(table[5], table[1], table[4], subbytes);
+			cat_memxor_set(table[7], table[1], table[6], subbytes);
+			cat_memxor_set(table[9], table[1], table[8], subbytes);
+			cat_memxor_set(table[12], table[4], table[8], subbytes);
+			cat_memxor_set(table[10], table[2], table[8], subbytes);
+			cat_memxor_set(table[11], table[3], table[8], subbytes);
+			cat_memxor_set(table[13], table[1], table[12], subbytes);
+			cat_memxor_set(table[14], table[2], table[12], subbytes);
+			cat_memxor_set(table[15], table[3], table[12], subbytes);
 		} // next 4-bit window
 
 		// Fix bit shift back to the start of the window
 		bit_shift -= 4;
 
 		// For each of the rows,
-		for (int y = x + 1; y < rows; ++y) {
+		for (y = x + 1; y < rows; ++y) {
 			Block *block_y = recovery[y];
 			u8 *dest = block_y->data;
 
 			DLOG(cout << "For row " << y << " at " << (u64)dest << endl;)
 
-			for (int jj = 0; jj < 8; ++jj, bit_row += bitstride, dest += subbytes) {
+			for (jj = 0; jj < 8; ++jj, bit_row += bitstride, dest += subbytes) {
 				u8 slice = (u8)(bit_row[0] >> bit_shift);
 				int low = slice & 15;
 				int high = slice >> 4;
@@ -962,19 +986,20 @@ static void win_gaussian_elimination(int rows, Block *recovery[256],
 
 				// Add
 				if (low && high) {
-					memxor_add(dest, lo_table[low], hi_table[high], subbytes);
+					cat_memxor_add(dest, lo_table[low], hi_table[high], subbytes);
 				} else if (low) {
-					memxor(dest, lo_table[low], subbytes);
+					cat_memxor(dest, lo_table[low], subbytes);
 				} else {
-					memxor(dest, hi_table[high], subbytes);
+					cat_memxor(dest, hi_table[high], subbytes);
 				}
 			}
 		}
 	}
 
-	int pivot = bit_rows - 3 * 8;
+	pivot = bit_rows - 3 * 8;
 	mask = (u64)1 << (pivot & 63);
 	base = bitmatrix + (pivot + 1) * bitstride;
+	int other_row;
 
 	// Clear final 3 columns
 	for (; pivot < bit_rows - 1; ++pivot, mask = CAT_ROL64(mask, 1), base += bitstride) {
@@ -983,13 +1008,13 @@ static void win_gaussian_elimination(int rows, Block *recovery[256],
 
 		DLOG(cout << "GE pivot " << pivot << endl;)
 
-		for (int other_row = pivot + 1; other_row < bit_rows; ++other_row, bit_row += bitstride) {
+		for (other_row = pivot + 1; other_row < bit_rows; ++other_row, bit_row += bitstride) {
 			if (bit_row[0] & mask) {
 				u8 *dest = recovery[other_row >> 3]->data + (other_row & 7) * subbytes;
 
 				DLOG(cout << "+ Foresub to row " << other_row << endl;)
 
-				memxor(dest, src, subbytes);
+				cat_memxor(dest, src, subbytes);
 			}
 		}
 	}
@@ -1001,15 +1026,18 @@ static void gaussian_elimination(int rows, Block *recovery[256], u64 *bitmatrix,
 	const int bit_rows = rows * 8;
 	u64 mask = 1;
 	u64 *base = bitmatrix;
+	int pivot;
+	int option;
+	int ii;
 
 	// For each pivot to find,
-	for (int pivot = 0; pivot < bit_rows - 1; ++pivot, mask = CAT_ROL64(mask, 1), base += bitstride) {
+	for (pivot = 0; pivot < bit_rows - 1; ++pivot, mask = CAT_ROL64(mask, 1), base += bitstride) {
 		const int pivot_word = pivot >> 6;
 		u64 *offset = base + pivot_word;
 		u64 *row = offset;
 
 		// For each option,
-		for (int option = pivot; option < bit_rows; ++option, row += bitstride) {
+		for (option = pivot; option < bit_rows; ++option, row += bitstride) {
 			// If bit in this row is set,
 			if (row[0] & mask) {
 				// Prepare to add in data
@@ -1023,10 +1051,10 @@ static void gaussian_elimination(int rows, Block *recovery[256], u64 *bitmatrix,
 					u8 *data = recovery[option >> 3]->data + (option & 7) * subbytes;
 
 					// Reorder data into the right place
-					memswap(src, data, subbytes);
+					cat_memswap(src, data, subbytes);
 
 					// Reorder matrix rows
-					memswap(row, offset, (bitstride - pivot_word) << 3);
+					cat_memswap(row, offset, (bitstride - pivot_word) << 3);
 				}
 
 				// For each other row,
@@ -1041,14 +1069,14 @@ static void gaussian_elimination(int rows, Block *recovery[256], u64 *bitmatrix,
 						other[0] ^= offset[0];
 
 						// For each remaining word,
-						for (int ii = 1; ii < bitstride - pivot_word; ++ii) {
+						for (ii = 1; ii < bitstride - pivot_word; ++ii) {
 							other[ii] ^= offset[ii];
 						}
 
 						// Add in the data
 						u8 *dest = recovery[option >> 3]->data + (option & 7) * subbytes;
 
-						memxor(dest, src, subbytes);
+						cat_memxor(dest, src, subbytes);
 					}
 				}
 
@@ -1067,8 +1095,12 @@ static void win_back_substitution(int rows, Block *recovery[256], u64 *bitmatrix
 	u8 **lo_table = tables[1];
 	u8 **hi_table = tables[0];
 
+	int x, y;
+	int table_index;
+	int ii;
+	int jj;
 	// For each column to generate,
-	for (int x = rows - 1; x >= 3; --x) {
+	for (x = rows - 1; x >= 3; --x) {
 		Block *block_x = recovery[x];
 		u8 *data = block_x->data + subbytes * 4;
 		u64 *bit_row = bitmatrix + bitstride * ((x + 1) * 8 - 2) + (x / 8);
@@ -1078,7 +1110,7 @@ static void win_back_substitution(int rows, Block *recovery[256], u64 *bitmatrix
 		DLOG(cout << "win_back_sub: " << x << endl;)
 
 		// For each of the two 4-bit windows,
-		for (int table_index = 0; table_index < 2; ++table_index) {
+		for (table_index = 0; table_index < 2; ++table_index) {
 			// Fill in lookup table
 			u8 **table = tables[table_index];
 			table[1] = (u8 *)data;
@@ -1089,7 +1121,7 @@ static void win_back_substitution(int rows, Block *recovery[256], u64 *bitmatrix
 			// On second loop,
 			if (table_index == 1) {
 				// Clear the upper right square
-				for (int ii = 8; ii > 0; ii >>= 1) {
+				for (ii = 8; ii > 0; ii >>= 1) {
 					int w = (u8)(bit_row[0] >> bit_shift) & 15;
 					bit_row -= bitstride;
 
@@ -1097,7 +1129,7 @@ static void win_back_substitution(int rows, Block *recovery[256], u64 *bitmatrix
 					DLOG(print_word(w, 4);)
 
 					if (w) {
-						memxor(lo_table[ii], hi_table[w], subbytes);
+						cat_memxor(lo_table[ii], hi_table[w], subbytes);
 					}
 				}
 
@@ -1115,7 +1147,7 @@ static void win_back_substitution(int rows, Block *recovery[256], u64 *bitmatrix
 			u64 word = bit_row[0] >> bit_shift;
 			bit_row -= bitstride;
 			if (word & 8) {
-				memxor(table[4], table[8], subbytes);
+				cat_memxor(table[4], table[8], subbytes);
 			}
 
 			DLOG(print_word(bit_row[0] >> bit_shift, 4);)
@@ -1123,10 +1155,10 @@ static void win_back_substitution(int rows, Block *recovery[256], u64 *bitmatrix
 			word = bit_row[0] >> bit_shift;
 			bit_row -= bitstride;
 			if (word & 8) {
-				memxor(table[2], table[8], subbytes);
+				cat_memxor(table[2], table[8], subbytes);
 			}
 			if (word & 4) {
-				memxor(table[2], table[4], subbytes);
+				cat_memxor(table[2], table[4], subbytes);
 			}
 
 			DLOG(print_word(bit_row[0] >> bit_shift, 4);)
@@ -1134,38 +1166,38 @@ static void win_back_substitution(int rows, Block *recovery[256], u64 *bitmatrix
 			word = bit_row[0] >> bit_shift;
 			bit_row -= bitstride;
 			if (word & 8) {
-				memxor(table[1], table[8], subbytes);
+				cat_memxor(table[1], table[8], subbytes);
 			}
 			if (word & 4) {
-				memxor(table[1], table[4], subbytes);
+				cat_memxor(table[1], table[4], subbytes);
 			}
 			if (word & 2) {
-				memxor(table[1], table[2], subbytes);
+				cat_memxor(table[1], table[2], subbytes);
 			}
 
 			// Generate table
-			memxor_set(table[3], table[1], table[2], subbytes);
-			memxor_set(table[6], table[2], table[4], subbytes);
-			memxor_set(table[5], table[1], table[4], subbytes);
-			memxor_set(table[7], table[1], table[6], subbytes);
-			memxor_set(table[9], table[1], table[8], subbytes);
-			memxor_set(table[12], table[4], table[8], subbytes);
-			memxor_set(table[10], table[2], table[8], subbytes);
-			memxor_set(table[11], table[3], table[8], subbytes);
-			memxor_set(table[13], table[1], table[12], subbytes);
-			memxor_set(table[14], table[2], table[12], subbytes);
-			memxor_set(table[15], table[3], table[12], subbytes);
+			cat_memxor_set(table[3], table[1], table[2], subbytes);
+			cat_memxor_set(table[6], table[2], table[4], subbytes);
+			cat_memxor_set(table[5], table[1], table[4], subbytes);
+			cat_memxor_set(table[7], table[1], table[6], subbytes);
+			cat_memxor_set(table[9], table[1], table[8], subbytes);
+			cat_memxor_set(table[12], table[4], table[8], subbytes);
+			cat_memxor_set(table[10], table[2], table[8], subbytes);
+			cat_memxor_set(table[11], table[3], table[8], subbytes);
+			cat_memxor_set(table[13], table[1], table[12], subbytes);
+			cat_memxor_set(table[14], table[2], table[12], subbytes);
+			cat_memxor_set(table[15], table[3], table[12], subbytes);
 		} // next 4-bit window
 
 		// For each of the rows,
-		for (int y = x - 1; y >= 0; --y) {
+		for (y = x - 1; y >= 0; --y) {
 			Block *block_y = recovery[y];
 
 			u8 *dest = block_y->data + 7 * subbytes;
 
 			DLOG(cout << "For row " << y << " at " << (u64)dest << endl;)
 
-			for (int jj = 0; jj < 8; ++jj, bit_row -= bitstride, dest -= subbytes) {
+			for (jj = 0; jj < 8; ++jj, bit_row -= bitstride, dest -= subbytes) {
 				u8 slice = (u8)(bit_row[0] >> bit_shift);
 				int low = slice & 15;
 				int high = slice >> 4;
@@ -1175,11 +1207,11 @@ static void win_back_substitution(int rows, Block *recovery[256], u64 *bitmatrix
 
 				// Add
 				if (low && high) {
-					memxor_add(dest, lo_table[low], hi_table[high], subbytes);
+					cat_memxor_add(dest, lo_table[low], hi_table[high], subbytes);
 				} else if (low) {
-					memxor(dest, lo_table[low], subbytes);
+					cat_memxor(dest, lo_table[low], subbytes);
 				} else {
-					memxor(dest, hi_table[high], subbytes);
+					cat_memxor(dest, hi_table[high], subbytes);
 				}
 			}
 		}
@@ -1188,6 +1220,7 @@ static void win_back_substitution(int rows, Block *recovery[256], u64 *bitmatrix
 	int pivot = 3 * 8 - 1;
 	u64 mask = (u64)1 << (pivot & 63);
 	const u64 *base = bitmatrix + ((pivot - 1) * bitstride);
+	int other_row;
 
 	// Clear remaining 3 columns
 	for (; pivot > 0; --pivot, mask = CAT_ROR64(mask, 1), base -= bitstride) {
@@ -1196,13 +1229,13 @@ static void win_back_substitution(int rows, Block *recovery[256], u64 *bitmatrix
 
 		DLOG(cout << "BS pivot " << pivot << endl;)
 
-		for (int other_row = pivot - 1; other_row >= 0; --other_row, bit_row -= bitstride) {
+		for (other_row = pivot - 1; other_row >= 0; --other_row, bit_row -= bitstride) {
 			if (bit_row[0] & mask) {
 				u8 *dest = recovery[other_row >> 3]->data + (other_row & 7) * subbytes;
 
 				DLOG(cout << "+ Backsub to row " << other_row << endl;)
 
-				memxor(dest, src, subbytes);
+				cat_memxor(dest, src, subbytes);
 			}
 		}
 	}
@@ -1211,25 +1244,28 @@ static void win_back_substitution(int rows, Block *recovery[256], u64 *bitmatrix
 static void back_substitution(int rows, Block *recovery[256], u64 *bitmatrix,
 							  int bitstride, int subbytes)
 {
-	for (int pivot = rows * 8 - 1; pivot > 0; --pivot) {
+	int pivot;
+	int other_row;
+
+	for (pivot = rows * 8 - 1; pivot > 0; --pivot) {
 		const u8 *src = recovery[pivot >> 3]->data + (pivot & 7) * subbytes;
 		const u64 *offset = bitmatrix + (pivot >> 6);
 		const u64 mask = (u64)1 << (pivot & 63);
 
 		DLOG(cout << "BS pivot " << pivot << endl;)
 
-		for (int other_row = pivot - 1; other_row >= 0; --other_row) {
+		for (other_row = pivot - 1; other_row >= 0; --other_row) {
 			if (offset[bitstride * other_row] & mask) {
 				DLOG(cout << "+ Backsub to row " << other_row << endl;)
 				u8 *dest = recovery[other_row >> 3]->data + (other_row & 7) * subbytes;
 
-				memxor(dest, src, subbytes);
+				cat_memxor(dest, src, subbytes);
 			}
 		}
 	}
 }
 
-extern "C" int cauchy_256_decode(int k, int m, Block *blocks, int block_bytes)
+int cauchy_256_decode(int k, int m, Block *blocks, int block_bytes)
 {
 	// If there is only one input block,
 	if (k <= 1) {
@@ -1250,7 +1286,7 @@ extern "C" int cauchy_256_decode(int k, int m, Block *blocks, int block_bytes)
 	Block *original[256];
 	int original_count;
 	u8 erasures[256];
-	sort_blocks(k, blocks, original, original_count, recovery, recovery_count, erasures);
+	sort_blocks(k, blocks, original, &original_count, recovery, &recovery_count, erasures);
 
 	DLOG(cout << "Recovery rows(" << recovery_count << "):" << endl;
 	for (int ii = 0; ii < recovery_count; ++ii) {
@@ -1276,35 +1312,35 @@ extern "C" int cauchy_256_decode(int k, int m, Block *blocks, int block_bytes)
 	// A combination of precomputation and heuristics provides a
 	// near-optimal matrix selection for each value of k, m.
 
-	GFC256Init();
-
 	const int subbytes = block_bytes / 8;
 
 	// Precomputation window workspace
 	u8 *precomp = 0;
 	u8 **precomp_tables[2];
 	u8 *table_stack[16 * 2];
+	int ii, jj;
 
 	// If precomputation window is being used,
 	if (recovery_count > PRECOMP_TABLE_THRESH) {
-		precomp = new u8[subbytes * PRECOMP_TABLE_SIZE * 2];
+		precomp = (u8*)malloc(subbytes * PRECOMP_TABLE_SIZE * 2);
 
 		precomp_tables[0] = table_stack;
 		precomp_tables[1] = table_stack + 16;
-		for (int ii = 0; ii < 16*2; ++ii) {
+		for (ii = 0; ii < 16*2; ++ii) {
 			table_stack[ii] = 0;
 		}
 
 		// Fill in tables
 		u8 *precomp_ptr = precomp;
-		for (int ii = 0; ii < 2; ++ii, precomp_ptr += subbytes * PRECOMP_TABLE_SIZE) {
-			u8 **table = precomp_tables[ii];
+		u8 **table;
+		for (ii = 0; ii < 2; ++ii, precomp_ptr += subbytes * PRECOMP_TABLE_SIZE) {
+			table = precomp_tables[ii];
 
 			table[3] = precomp_ptr;
 			table[5] = precomp_ptr + subbytes;
 			table[6] = precomp_ptr + subbytes * 2;
 			table[7] = precomp_ptr + subbytes * 3;
-			for (int jj = 9; jj < 16; ++jj) {
+			for (jj = 9; jj < 16; ++jj) {
 				table[jj] = precomp_ptr + subbytes * (jj - 5);
 			}
 		}
@@ -1313,8 +1349,8 @@ extern "C" int cauchy_256_decode(int k, int m, Block *blocks, int block_bytes)
 	// Generate Cauchy matrix
 	int stride;
 	u8 stack_space[CAT_CAUCHY_MATRIX_STACK_SIZE];
-	bool dynamic_matrix;
-	const u8 *matrix = cauchy_matrix(k, m, stride, stack_space, dynamic_matrix);
+	int dynamic_matrix;
+	u8 *matrix = cauchy_matrix(k, m, &stride, stack_space, &dynamic_matrix);
 
 	// From the Cauchy matrix, each byte value can be expanded into
 	// an 8x8 submatrix containing a minimal number of ones.
@@ -1345,7 +1381,7 @@ extern "C" int cauchy_256_decode(int k, int m, Block *blocks, int block_bytes)
 	// Generate square bitmatrix for erased columns from recovery rows
 	int bitstride;
 	u64 *bitmatrix = generate_bitmatrix(k, recovery, recovery_count, matrix,
-										stride, erasures, bitstride);
+										stride, erasures, &bitstride);
 
 	DLOG(print_matrix(bitmatrix, bitstride, recovery_count * 8);)
 
@@ -1379,12 +1415,12 @@ extern "C" int cauchy_256_decode(int k, int m, Block *blocks, int block_bytes)
 	}
 
 	// Free temporary workspace
-	delete []bitmatrix;
+	free(bitmatrix);
 	if (dynamic_matrix) {
-		delete []matrix;
+		free(matrix);
 	}
 	if (precomp) {
-		delete []precomp;
+		free(precomp);
 	}
 
 	return 0;
@@ -1399,7 +1435,7 @@ static void win_encode(int k, int m, const u8 *matrix, int stride,
 {
 	static const int PRECOMP_TABLE_SIZE = 11;
 
-	u8 *precomp = new u8[subbytes * PRECOMP_TABLE_SIZE * 2];
+	u8 *precomp =  (u8*)malloc(subbytes * PRECOMP_TABLE_SIZE * 2);
 	u8 *table_stack[16 * 2] = {0};
 	u8 **tables[2] = {
 		table_stack, table_stack + 16
@@ -1407,24 +1443,29 @@ static void win_encode(int k, int m, const u8 *matrix, int stride,
 
 	// Fill in tables
 	u8 *precomp_ptr = precomp;
-	for (int ii = 0; ii < 2; ++ii, precomp_ptr += subbytes * PRECOMP_TABLE_SIZE) {
-		u8 **table = tables[ii];
+
+	int ii, jj, x, y, bit_y, low, high;
+	u8 **table;
+	u8 *row, *src;
+	for (ii = 0; ii < 2; ++ii, precomp_ptr += subbytes * PRECOMP_TABLE_SIZE) {
+		table = tables[ii];
+
 		table[3] = precomp_ptr;
 		table[5] = precomp_ptr + subbytes;
 		table[6] = precomp_ptr + subbytes * 2;
 		table[7] = precomp_ptr + subbytes * 3;
-		for (int jj = 9; jj < 16; ++jj) {
+		for (jj = 9; jj < 16; ++jj) {
 			table[jj] = precomp_ptr + subbytes * (jj - 5);
 		}
 	}
 
 	// For each column to generate,
-	for (int x = 0; x < k; ++x, ++matrix) {
-		const u8 *row = matrix;
-		u8 *src = (u8 *)data[x]; // cast to fit table type
+	for (x = 0; x < k; ++x, ++matrix) {
+		row = (u8 *)matrix;
+		src = (u8 *)data[x]; // cast to fit table type
 
 		// Fill in tables
-		for (int ii = 0; ii < 2; ++ii, src += subbytes * 4) {
+		for (ii = 0; ii < 2; ++ii, src += subbytes * 4) {
 			u8 **table = tables[ii];
 
 			table[1] = (u8 *)src;
@@ -1432,36 +1473,36 @@ static void win_encode(int k, int m, const u8 *matrix, int stride,
 			table[4] = (u8 *)src + subbytes * 2;
 			table[8] = (u8 *)src + subbytes * 3;
 
-			memxor_set(table[3], table[1], table[2], subbytes);
-			memxor_set(table[6], table[2], table[4], subbytes);
-			memxor_set(table[5], table[1], table[4], subbytes);
-			memxor_set(table[7], table[1], table[6], subbytes);
-			memxor_set(table[9], table[1], table[8], subbytes);
-			memxor_set(table[12], table[4], table[8], subbytes);
-			memxor_set(table[10], table[2], table[8], subbytes);
-			memxor_set(table[11], table[3], table[8], subbytes);
-			memxor_set(table[13], table[1], table[12], subbytes);
-			memxor_set(table[14], table[2], table[12], subbytes);
-			memxor_set(table[15], table[3], table[12], subbytes);
+			cat_memxor_set(table[3], table[1], table[2], subbytes);
+			cat_memxor_set(table[6], table[2], table[4], subbytes);
+			cat_memxor_set(table[5], table[1], table[4], subbytes);
+			cat_memxor_set(table[7], table[1], table[6], subbytes);
+			cat_memxor_set(table[9], table[1], table[8], subbytes);
+			cat_memxor_set(table[12], table[4], table[8], subbytes);
+			cat_memxor_set(table[10], table[2], table[8], subbytes);
+			cat_memxor_set(table[11], table[3], table[8], subbytes);
+			cat_memxor_set(table[13], table[1], table[12], subbytes);
+			cat_memxor_set(table[14], table[2], table[12], subbytes);
+			cat_memxor_set(table[15], table[3], table[12], subbytes);
 		}
 
 		// For each of the rows,
 		u8 *dest = out;
-		for (int y = 1; y < m; ++y, row += stride) {
+		for (y = 1; y < m; ++y, row += stride) {
 			u8 slice = row[0];
 
 			// Generate 8x8 submatrix and XOR in bits as needed
-			for (int bit_y = 0;; ++bit_y) {
-				int low = slice & 15;
-				int high = slice >> 4;
+			for (bit_y = 0;; ++bit_y) {
+				low = slice & 15;
+				high = slice >> 4;
 
 				// Add
 				if (low && high) {
-					memxor_add(dest, tables[0][low], tables[1][high], subbytes);
+					cat_memxor_add(dest, tables[0][low], tables[1][high], subbytes);
 				} else if (low) {
-					memxor(dest, tables[0][low], subbytes);
+					cat_memxor(dest, tables[0][low], subbytes);
 				} else {
-					memxor(dest, tables[1][high], subbytes);
+					cat_memxor(dest, tables[1][high], subbytes);
 				}
 				dest += subbytes;
 
@@ -1474,18 +1515,19 @@ static void win_encode(int k, int m, const u8 *matrix, int stride,
 		}
 	}
 
-	delete []precomp;
+	free(precomp);
 }
 
-extern "C" int cauchy_256_encode(int k, int m, const u8 *data[],
+int cauchy_256_encode(int k, int m, const u8 *data[],
 								 void *vrecovery_blocks, int block_bytes)
 {
-	u8 *recovery_blocks = reinterpret_cast<u8 *>( vrecovery_blocks );
+	u8 *recovery_blocks = (u8 *)( vrecovery_blocks );
+	int ii;
 
 	// If only one input block,
 	if (k <= 1) {
 		// For each output block,
-		for (int ii = 0; ii < m; ++ii, recovery_blocks += block_bytes) {
+		for (ii = 0; ii < m; ++ii, recovery_blocks += block_bytes) {
 			// Copy it directly to output
 			memcpy(recovery_blocks, data[0], block_bytes);
 		}
@@ -1494,10 +1536,11 @@ extern "C" int cauchy_256_encode(int k, int m, const u8 *data[],
 	}
 
 	// XOR all input blocks together
-	memxor_set(recovery_blocks, data[0], data[1], block_bytes);
+	cat_memxor_set(recovery_blocks, data[0], data[1], block_bytes);
 
-	for (int x = 2; x < k; ++x) {
-		memxor(recovery_blocks, data[x], block_bytes);
+	int x;
+	for (x = 2; x < k; ++x) {
+		cat_memxor(recovery_blocks, data[x], block_bytes);
 	}
 
 	// If only one recovery block needed,
@@ -1511,13 +1554,11 @@ extern "C" int cauchy_256_encode(int k, int m, const u8 *data[],
 		return -1;
 	}
 
-	GFC256Init();
-
 	// Generate Cauchy matrix
 	int stride;
 	u8 stack_space[CAT_CAUCHY_MATRIX_STACK_SIZE];
-	bool dynamic_matrix;
-	const u8 *matrix = cauchy_matrix(k, m, stride, stack_space, dynamic_matrix);
+	int dynamic_matrix;
+	u8 *matrix = cauchy_matrix(k, m, &stride, stack_space, &dynamic_matrix);
 
 	// The first 8 rows of the bitmatrix are always the same, 8x8 identity
 	// matrices all the way across.  So we don't even bother generating those
@@ -1531,6 +1572,9 @@ extern "C" int cauchy_256_encode(int k, int m, const u8 *data[],
 	// Clear output buffer
 	memset(out, 0, block_bytes * (m - 1));
 
+	int y;
+	int bit_x;
+	int bit_y;
 	// If the number of symbols to generate gets larger,
 	if (m > 4) {
 		// Start using a windowed approach to encoding
@@ -1539,11 +1583,11 @@ extern "C" int cauchy_256_encode(int k, int m, const u8 *data[],
 		const u8 *row = matrix;
 
 		// For each remaining row to generate,
-		for (int y = 1; y < m; ++y, row += stride, out += block_bytes) {
+		for (y = 1; y < m; ++y, row += stride, out += block_bytes) {
 			const u8 *column = row;
 
 			// For each symbol column,
-			for (int x = 0; x < k; ++x, ++column) {
+			for (x = 0; x < k; ++x, ++column) {
 				const u8 *src = data[x];
 				u8 slice = column[0];
 				u8 *dest = out;
@@ -1551,12 +1595,12 @@ extern "C" int cauchy_256_encode(int k, int m, const u8 *data[],
 				DLOG(cout << "ENCODE: Using " << (int)slice << " at " << x << ", " << y << endl;)
 
 				// Generate 8x8 submatrix and XOR in bits as needed
-				for (int bit_y = 0;; ++bit_y) {
+				for (bit_y = 0;; ++bit_y) {
 					const u8 *src_x = src;
 
-					for (int bit_x = 0; bit_x < 8; ++bit_x, src_x += subbytes) {
+					for (bit_x = 0; bit_x < 8; ++bit_x, src_x += subbytes) {
 						if (slice & (1 << bit_x)) {
-							memxor(dest, src_x, subbytes);
+							cat_memxor(dest, src_x, subbytes);
 						}
 					}
 
@@ -1572,7 +1616,7 @@ extern "C" int cauchy_256_encode(int k, int m, const u8 *data[],
 	}
 
 	if (dynamic_matrix) {
-		delete []matrix;
+		free(matrix);
 	}
 
 	return 0;

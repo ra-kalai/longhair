@@ -29,7 +29,6 @@
 #ifndef CAT_CONFIG_HPP
 #define CAT_CONFIG_HPP
 
-namespace cat {
 
 
 // This definition overrides CAT_BUILD_DLL below.  Neuters CAT_EXPORT macro so symbols are
@@ -100,7 +99,5 @@ namespace cat {
 // Define this to enable auditing of data security code
 //#define CAT_AUDIT
 
-
-} // namespace cat
 
 #endif // CAT_CONFIG_HPP

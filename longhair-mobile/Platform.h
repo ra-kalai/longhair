@@ -29,9 +29,8 @@
 #ifndef CAT_PLATFORM_HPP
 #define CAT_PLATFORM_HPP
 
-#include "Config.hpp"
+#include "Config.h"
 
-namespace cat {
 
 
 // Used to detect whether or not libcat is included
@@ -125,13 +124,11 @@ namespace cat {
 #  define CAT_FUNCTION __FUNCTION__
 # endif
 
-} // namespace cat
 
 // Intrinsics:
 # include <cstdlib>
 # include <intrin.h>
 # include <mmintrin.h>
-namespace cat {
 
 //-----------------------------------------------------------------------------
 // Otherwise unknown compiler
@@ -569,9 +566,7 @@ namespace cat {
 
 #else
 
-} // namespace cat
 #include <stdint.h>
-namespace cat {
 
 	// All other compilers use this
 	typedef uint8_t  u8;
@@ -608,16 +603,14 @@ union Float32 {
 	float f;
 	u32 i;
 
-	Float32(float n) { f = n; }
-	Float32(u32 n) { i = n; }
+	//Float32(float n) { f = n; }
+	//Float32(u32 n) { i = n; }
 };
 
 
 //// String and buffer macros ////
 
-} // namespace cat
 #include <string.h>
-namespace cat {
 
 #if defined(CAT_OS_WINDOWS)
 # define CAT_NEWLINE "\r\n"
@@ -648,34 +641,34 @@ namespace cat {
 // Fine and line string macro
 #define CAT_FILE_LINE_STRING __FILE__ ":" CAT_STRINGIZE(__LINE__)
 
-// Variable-length data trailing a struct
-template<typename T> CAT_INLINE u8 *GetTrailingBytes(T *t) { return reinterpret_cast<u8*>( t ) + sizeof(T); }
-
-// Bounds
-template<typename T> CAT_INLINE T BoundMin(const T &minimum, const T &x)
-{
-	if (x < minimum) return minimum;
-	return x;
-}
-
-template<typename T> CAT_INLINE T BoundMax(const T &maximum, const T &x)
-{
-	if (x > maximum) return maximum;
-	return x;
-}
-
-template<typename T> CAT_INLINE T Bound(const T &minimum, const T &maximum, const T &x)
-{
-	if (x < minimum) return minimum;
-	if (x > maximum) return maximum;
-	return x;
-}
-
-// Absolute Value
-template<typename T> CAT_INLINE T AbsVal(const T &x)
-{
-	return x < 0 ? -x : x;
-}
+//// Variable-length data trailing a struct
+//template<typename T> CAT_INLINE u8 *GetTrailingBytes(T *t) { return reinterpret_cast<u8*>( t ) + sizeof(T); }
+//
+//// Bounds
+//template<typename T> CAT_INLINE T BoundMin(const T &minimum, const T &x)
+//{
+//	if (x < minimum) return minimum;
+//	return x;
+//}
+//
+//template<typename T> CAT_INLINE T BoundMax(const T &maximum, const T &x)
+//{
+//	if (x > maximum) return maximum;
+//	return x;
+//}
+//
+//template<typename T> CAT_INLINE T Bound(const T &minimum, const T &maximum, const T &x)
+//{
+//	if (x < minimum) return minimum;
+//	if (x > maximum) return maximum;
+//	return x;
+//}
+//
+//// Absolute Value
+//template<typename T> CAT_INLINE T AbsVal(const T &x)
+//{
+//	return x < 0 ? -x : x;
+//}
 
 
 
@@ -779,12 +772,13 @@ template<typename T> CAT_INLINE T AbsVal(const T &x)
 
 //// No Copy ////
 
+/*
 #define CAT_NO_COPY(T) \
 private: \
 	CAT_INLINE T(const T&) {} \
 	CAT_INLINE T& operator=(const T&) { return *this; }
+*/
 
-} // namespace cat
 
 
 //// Memory Leaks ////
@@ -818,7 +812,7 @@ private: \
 # define __has_extension(x) 0
 #endif
 
-#if defined(__GNUC__) && __GNUC_MINOR__ >= 7
+#if (defined(__GNUC__) && __GNUC_MINOR__ >= 7 || __GNUC__ >= 5)
 # define CAT_HAS_VECTOR_EXTENSIONS
 # define CAT_VECTOR_SIZE(T, elements) __attribute__((vector_size(sizeof(T) * elements)))
 # define CAT_VECTOR_EXT_GCC

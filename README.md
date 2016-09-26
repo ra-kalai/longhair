@@ -1,3 +1,9 @@
+self note:
+
+ * **longhair-mobile** project was migrated from C++ to C to avoid dependency on libstdc++
+ * passing -O3 to gcc seem to generate segfaulting code ( also present on original C++ version )
+ * performance is same-same ( ~1.5% faster than original C++ version with gcc -O2, k=100, m=12, lost = 10 _)
+
 # Longhair
 ## Fast Cauchy Reed-Solomon Erasure Codes in C
 
