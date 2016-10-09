@@ -492,12 +492,23 @@ static void cauchy_decode_m1(int k, Block *blocks, int block_bytes)
 	// Find erased row
 	Block *erased = blocks;
 	int ii;
+	u8 missing[k];
+	memset(missing, 0, k);
+
 	for (ii = 0; ii < k; ++ii, ++erased) {
+		missing[erased->row] = 1;
 		if (erased->row >= k) {
 			DLOG(cout << "Found erased row " << ii << " on block row " << (int)erased->row << endl;)
 			break;
 		}
 	}
+
+	for(ii=0;ii<k;ii++) {
+		if (missing[ii] == 0) {
+			break;
+		}
+	}
+	erased->row = ii;
 
 	// XOR all other blocks into the recovery block
 	u8 *out = erased->data;
